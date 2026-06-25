@@ -19,24 +19,22 @@ os.makedirs(OUTPUTS, exist_ok=True)
 #  CORS — manual, no flask-cors, applied to EVERY response including errors
 # ════════════════════════════════════════════════════════════════════════════
 def cors_response(data, status=200):
-    """Wrap any JSON response with CORS headers."""
     resp = make_response(jsonify(data), status)
-    resp.headers["Access-Control-Allow-Origin"]      = "*"
-    resp.headers["Access-Control-Allow-Headers"]     = "Content-Type, Authorization, X-Requested-With"
-    resp.headers["Access-Control-Allow-Methods"]     = "GET, POST, PUT, DELETE, OPTIONS"
+    resp.headers["Access-Control-Allow-Origin"] = "https://hifivault.vercel.app"
+    resp.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization, X-Requested-With"
+    resp.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
     resp.headers["Access-Control-Allow-Credentials"] = "false"
-    resp.headers["Access-Control-Max-Age"]           = "86400"
+    resp.headers["Access-Control-Max-Age"] = "86400"
     return resp
 
 @app.after_request
 def inject_cors(response):
-    response.headers["Access-Control-Allow-Origin"]      = "*"
-    response.headers["Access-Control-Allow-Headers"]     = "Content-Type, Authorization, X-Requested-With"
-    response.headers["Access-Control-Allow-Methods"]     = "GET, POST, PUT, DELETE, OPTIONS"
+    response.headers["Access-Control-Allow-Origin"] = "https://hifivault.vercel.app"
+    response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization, X-Requested-With"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
     response.headers["Access-Control-Allow-Credentials"] = "false"
-    response.headers["Access-Control-Max-Age"]           = "86400"
+    response.headers["Access-Control-Max-Age"] = "86400"
     return response
-
 # Handle ALL OPTIONS preflight requests globally
 @app.route("/", defaults={"path": ""}, methods=["OPTIONS"])
 @app.route("/<path:path>", methods=["OPTIONS"])
