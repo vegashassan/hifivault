@@ -1,6 +1,8 @@
 from flask import Flask, request, jsonify, send_from_directory, make_response
 from PIL import Image
 import os, uuid, struct, base64, mimetypes
+import numpy as np
+
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from cryptography.hazmat.primitives import hashes
@@ -9,63 +11,38 @@ from flask_cors import CORS
 
 app = Flask(__name__)
 
+# ── CORS ─────────────────────────────────────────────
+FRONTEND = "https://hifivault.vercel.app"
+
 CORS(
     app,
-    origins=["https://hifivault.vercel.app"],
-    methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    origins=[FRONTEND],
+    methods=["GET", "POST", "OPTIONS"],
     allow_headers=["Content-Type", "Authorization"]
 )
 
-# ── Storage ───────────────────────────────────────────────────────────────────
-MEDIA   = "media"
+@app.after_request
+def add_cors_headers(response):
+    response.headers["Access-Control-Allow-Origin"] = FRONTEND
+    response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+    response.headers["Access-Control-Allow-Credentials"] = "false"
+    return response
+
+
+# ── STORAGE ─────────────────────────────────────────
+MEDIA = "media"
 UPLOADS = os.path.join(MEDIA, "uploads")
 OUTPUTS = os.path.join(MEDIA, "outputs")
+
 os.makedirs(UPLOADS, exist_ok=True)
 os.makedirs(OUTPUTS, exist_ok=True)
 
-@app.route("/api/hide/", methods=["POST", "OPTIONS"])
-def hide():
-    if request.method == "OPTIONS":
-        return '', 204
 
-
-@app.route("/api/extract/", methods=["POST", "OPTIONS"])
-def extract():
-    if request.method == "OPTIONS":
-        return '', 204
-# ════════════════════════════════════════════════════════════════════════════
-#  CORS — manual, no flask-cors, applied to EVERY response including errors
-# ════════════════════════════════════════════════════════════════════════════
-def cors_response(data, status=200):
-    resp = make_response(jsonify(data), status)
-    resp.headers["Access-Control-Allow-Origin"] = "https://hifivault.vercel.app"
-    resp.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization, X-Requested-With"
-    resp.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
-    resp.headers["Access-Control-Allow-Credentials"] = "false"
-    resp.headers["Access-Control-Max-Age"] = "86400"
-    return resp
-
-@app.after_request
-def inject_cors(response):
-    response.headers["Access-Control-Allow-Origin"] = "https://hifivault.vercel.app"
-    response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization, X-Requested-With"
-    response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
-    response.headers["Access-Control-Allow-Credentials"] = "false"
-    response.headers["Access-Control-Max-Age"] = "86400"
-    return response
-# Handle ALL OPTIONS preflight requests globally
-@app.route("/", defaults={"path": ""}, methods=["OPTIONS"])
-@app.route("/<path:path>", methods=["OPTIONS"])
-def preflight(path):
-    return cors_response({})
-
-
-# ════════════════════════════════════════════════════════════════════════════
-#  CRYPTO — AES-256-GCM + PBKDF2
-# ════════════════════════════════════════════════════════════════════════════
+# ── CRYPTO ──────────────────────────────────────────
 ITERATIONS = 200_000
 
-def _derive_key(password: str, salt: bytes) -> bytes:
+def derive_key(password: str, salt: bytes):
     kdf = PBKDF2HMAC(
         algorithm=hashes.SHA256(),
         length=32,
@@ -74,243 +51,197 @@ def _derive_key(password: str, salt: bytes) -> bytes:
     )
     return kdf.derive(password.encode())
 
+
 def encrypt(data: bytes, password: str):
-    salt  = os.urandom(16)
-    key   = _derive_key(password, salt)
+    salt = os.urandom(16)
+    key = derive_key(password, salt)
     nonce = os.urandom(12)
-    ct    = AESGCM(key).encrypt(nonce, data, None)
+    ct = AESGCM(key).encrypt(nonce, data, None)
     return salt, nonce + ct
 
-def decrypt(blob_b64: str, password: str, salt_b64: str) -> bytes:
-    salt  = base64.b64decode(salt_b64)
-    blob  = base64.b64decode(blob_b64)
-    key   = _derive_key(password, salt)
+
+def decrypt(blob_b64: str, password: str, salt_b64: str):
+    salt = base64.b64decode(salt_b64)
+    blob = base64.b64decode(blob_b64)
+    key = derive_key(password, salt)
     nonce, ct = blob[:12], blob[12:]
     return AESGCM(key).decrypt(nonce, ct, None)
 
 
-# ════════════════════════════════════════════════════════════════════════════
-#  PAYLOAD — HIFIVAULT|filename|mimetype|salt_b64|data_b64
-# ════════════════════════════════════════════════════════════════════════════
+# ── PAYLOAD ─────────────────────────────────────────
 MAGIC = "HIFIVAULT"
-SEP   = "|"
+SEP = "|"
 
-def create_payload(filename, filetype, salt, encrypted_data):
+
+def create_payload(filename, filetype, salt, encrypted):
     return SEP.join([
         MAGIC,
         filename,
         filetype,
         base64.b64encode(salt).decode(),
-        base64.b64encode(encrypted_data).decode(),
+        base64.b64encode(encrypted).decode(),
     ])
+
 
 def parse_payload(raw):
     parts = raw.split(SEP, 4)
     if len(parts) != 5 or parts[0] != MAGIC:
         return None
+
     return {
-        "filename":       parts[1],
-        "filetype":       parts[2],
-        "salt":           parts[3],
+        "filename": parts[1],
+        "filetype": parts[2],
+        "salt": parts[3],
         "encrypted_data": parts[4],
     }
 
 
-# ════════════════════════════════════════════════════════════════════════════
-#  STEGANOGRAPHY — LSB
-# ════════════════════════════════════════════════════════════════════════════
-def _to_png(src_path):
-    if src_path.lower().endswith(".png"):
-        return src_path
-    dst = src_path.rsplit(".", 1)[0] + "_converted.png"
-    img = Image.open(src_path)
-    img.convert("RGB").save(dst, "PNG")
-    return dst
-
-def get_capacity(image_path):
+# ── STEGANOGRAPHY (OPTIMIZED) ───────────────────────
+def hide_image(image_path, payload, output_path):
     img = Image.open(image_path).convert("RGB")
-    w, h = img.size
-    return (w * h * 3) // 8 - 4
+    arr = np.array(img)
 
-def hide(image_path, payload, output_path):
-    data   = payload.encode("utf-8")
+    flat = arr.flatten()
+
+    data = payload.encode()
     length = len(data)
-    img    = Image.open(image_path).convert("RGB")
-    w, h   = img.size
-    pixels = list(img.getdata())
 
-    max_bytes = (w * h * 3) // 8 - 4
-    if length > max_bytes:
-        raise ValueError(f"Payload too large ({length} bytes). Image only holds {max_bytes} bytes.")
-
-    # Build bit array: 4-byte length header + payload
     bits = []
     for byte in struct.pack(">I", length) + data:
         for i in range(7, -1, -1):
             bits.append((byte >> i) & 1)
 
-    flat = [ch for px in pixels for ch in px]
-    for i, bit in enumerate(bits):
-        flat[i] = (flat[i] & 0xFE) | bit
+    if len(bits) > len(flat):
+        raise ValueError("Image too small for payload")
 
-    out = Image.new("RGB", (w, h))
-    out.putdata([tuple(flat[i*3:i*3+3]) for i in range(w * h)])
+    for i in range(len(bits)):
+        flat[i] = (flat[i] & 254) | bits[i]
+
+    out = Image.fromarray(flat.reshape(arr.shape).astype("uint8"))
     out.save(output_path, "PNG")
 
-def extract(image_path):
-    img    = Image.open(image_path).convert("RGB")
-    w, h   = img.size
-    pixels = list(img.getdata())
-    flat   = [ch for px in pixels for ch in px]
 
-    def read_bytes(count, bit_offset):
-        result = bytearray()
+def extract_image(image_path):
+    img = Image.open(image_path).convert("RGB")
+    arr = np.array(img).flatten()
+
+    def read_bits(offset, count):
+        out = bytearray()
         for i in range(count):
             byte = 0
             for j in range(8):
-                idx = (bit_offset + i) * 8 + j
-                byte = (byte << 1) | (flat[idx] & 1)
-            result.append(byte)
-        return bytes(result)
+                byte = (byte << 1) | (arr[(offset + i) * 8 + j] & 1)
+            out.append(byte)
+        return bytes(out)
 
-    length = struct.unpack(">I", read_bytes(4, 0))[0]
+    length = struct.unpack(">I", read_bits(0, 4))[0]
 
-    if length == 0 or length > (w * h * 3) // 8:
-        raise ValueError("No valid HifiVault payload found.")
+    if length <= 0 or length > len(arr):
+        raise ValueError("No valid payload found")
 
-    return read_bytes(length, 4).decode("utf-8")
+    return read_bits(4, length).decode()
 
 
-# ════════════════════════════════════════════════════════════════════════════
-#  ROUTES
-# ════════════════════════════════════════════════════════════════════════════
+# ── ROUTES ──────────────────────────────────────────
 @app.route("/")
-def health():
-    return cors_response({"status": "HifiVault API running"})
+def home():
+    return jsonify({"status": "HifiVault API running"})
 
 
-@app.route("/api/hide/", methods=["POST"])
+@app.route("/api/hide/", methods=["POST", "OPTIONS"])
 def api_hide():
-    image_file  = request.files.get("image")
-    secret_file = request.files.get("file")
-    password    = request.form.get("password", "").strip()
+    if request.method == "OPTIONS":
+        return "", 204
 
-    if not image_file:
-        return cors_response({"error": "No cover image provided"}, 400)
-    if not secret_file:
-        return cors_response({"error": "No secret file provided"}, 400)
-    if not password:
-        return cors_response({"error": "No password provided"}, 400)
+    image = request.files.get("image")
+    secret = request.files.get("file")
+    password = request.form.get("password", "").strip()
 
-    # Save cover image
-    ext      = os.path.splitext(image_file.filename)[-1].lower() or ".png"
-    img_path = os.path.join(UPLOADS, f"{uuid.uuid4()}{ext}")
-    image_file.save(img_path)
+    if not image or not secret or not password:
+        return jsonify({"error": "Missing fields"}), 400
 
-    try:
-        png_path = _to_png(img_path)
-    except Exception as e:
-        return cors_response({"error": f"Could not read image: {e}"}, 400)
+    img_path = os.path.join(UPLOADS, f"{uuid.uuid4()}.png")
+    image.save(img_path)
 
-    # Read secret
-    file_bytes = secret_file.read()
-    if not file_bytes:
-        return cors_response({"error": "Secret file is empty"}, 400)
+    file_bytes = secret.read()
 
-    # Encrypt
     salt, encrypted = encrypt(file_bytes, password)
 
-    # Build payload
-    mime    = secret_file.content_type or \
-              mimetypes.guess_type(secret_file.filename)[0] or \
-              "application/octet-stream"
-    payload = create_payload(secret_file.filename, mime, salt, encrypted)
+    mime = secret.content_type or mimetypes.guess_type(secret.filename)[0] or "application/octet-stream"
 
-    # Capacity check
-    try:
-        cap = get_capacity(png_path)
-    except Exception as e:
-        return cors_response({"error": f"Image error: {e}"}, 400)
+    payload = create_payload(secret.filename, mime, salt, encrypted)
 
-    needed = len(payload.encode("utf-8"))
-    if needed > cap:
-        return cors_response({
-            "error": f"Image too small. Need {needed // 1024 + 1} KB capacity but image only holds {cap // 1024} KB. Use a larger image."
-        }, 400)
-
-    # Embed
     out_name = f"stego_{uuid.uuid4()}.png"
     out_path = os.path.join(OUTPUTS, out_name)
-    try:
-        hide(png_path, payload, out_path)
-    except Exception as e:
-        return cors_response({"error": f"Embedding failed: {e}"}, 500)
 
-    base_url = request.host_url.rstrip("/")
-    return cors_response({
-        "status":   "success",
-        "download": f"{base_url}/download/{out_name}",
+    try:
+        hide_image(img_path, payload, out_path)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+    base = request.host_url.rstrip("/")
+
+    return jsonify({
+        "status": "success",
+        "download": f"{base}/download/{out_name}"
     })
 
 
-@app.route("/api/extract/", methods=["POST"])
+@app.route("/api/extract/", methods=["POST", "OPTIONS"])
 def api_extract():
-    image_file = request.files.get("image")
-    password   = request.form.get("password", "").strip()
+    if request.method == "OPTIONS":
+        return "", 204
 
-    if not image_file:
-        return cors_response({"error": "No image provided"}, 400)
-    if not password:
-        return cors_response({"error": "No password provided"}, 400)
+    image = request.files.get("image")
+    password = request.form.get("password", "").strip()
 
-    ext      = os.path.splitext(image_file.filename)[-1].lower() or ".png"
-    img_path = os.path.join(UPLOADS, f"{uuid.uuid4()}{ext}")
-    image_file.save(img_path)
+    if not image or not password:
+        return jsonify({"error": "Missing fields"}), 400
 
-    # Extract
+    img_path = os.path.join(UPLOADS, f"{uuid.uuid4()}.png")
+    image.save(img_path)
+
     try:
-        raw = extract(img_path)
+        raw = extract_image(img_path)
     except Exception as e:
-        return cors_response({"error": f"No hidden data found. ({e})"}, 400)
+        return jsonify({"error": str(e)}), 400
 
-    # Parse
     payload = parse_payload(raw)
-    if not payload:
-        return cors_response({"error": "Corrupted payload or not a HifiVault image."}, 400)
 
-    # Decrypt
+    if not payload:
+        return jsonify({"error": "Invalid payload"}), 400
+
     try:
         decrypted = decrypt(
-            blob_b64=payload["encrypted_data"],
-            password=password,
-            salt_b64=payload["salt"],
+            payload["encrypted_data"],
+            password,
+            payload["salt"]
         )
     except Exception:
-        return cors_response({"error": "Wrong password or corrupted data."}, 400)
+        return jsonify({"error": "Wrong password"}), 400
 
-    # Save extracted file
-    safe_name = os.path.basename(payload["filename"])
-    out_name  = f"{uuid.uuid4()}_{safe_name}"
-    out_path  = os.path.join(OUTPUTS, out_name)
+    out_name = f"{uuid.uuid4()}_{payload['filename']}"
+    out_path = os.path.join(OUTPUTS, out_name)
+
     with open(out_path, "wb") as f:
         f.write(decrypted)
 
-    base_url = request.host_url.rstrip("/")
-    return cors_response({
-        "status":   "success",
-        "filename": safe_name,
+    base = request.host_url.rstrip("/")
+
+    return jsonify({
+        "status": "success",
+        "filename": payload["filename"],
         "filetype": payload["filetype"],
-        "saved_to": f"{base_url}/download/{out_name}",
+        "saved_to": f"{base}/download/{out_name}"
     })
 
 
 @app.route("/download/<path:filename>")
 def download(filename):
-    safe = os.path.basename(filename)
-    return send_from_directory(OUTPUTS, safe, as_attachment=True)
+    return send_from_directory(OUTPUTS, filename, as_attachment=True)
 
 
-# ════════════════════════════════════════════════════════════════════════════
+# ── RUN ─────────────────────────────────────────────
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
     app.run(host="0.0.0.0", port=port, debug=False)
