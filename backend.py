@@ -5,7 +5,16 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from cryptography.hazmat.primitives import hashes
 
+from flask_cors import CORS
+
 app = Flask(__name__)
+
+CORS(
+    app,
+    origins=["https://hifivault.vercel.app"],
+    methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization"]
+)
 
 # ── Storage ───────────────────────────────────────────────────────────────────
 MEDIA   = "media"
