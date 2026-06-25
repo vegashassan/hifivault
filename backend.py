@@ -23,7 +23,16 @@ OUTPUTS = os.path.join(MEDIA, "outputs")
 os.makedirs(UPLOADS, exist_ok=True)
 os.makedirs(OUTPUTS, exist_ok=True)
 
+@app.route("/api/hide/", methods=["POST", "OPTIONS"])
+def hide():
+    if request.method == "OPTIONS":
+        return '', 204
 
+
+@app.route("/api/extract/", methods=["POST", "OPTIONS"])
+def extract():
+    if request.method == "OPTIONS":
+        return '', 204
 # ════════════════════════════════════════════════════════════════════════════
 #  CORS — manual, no flask-cors, applied to EVERY response including errors
 # ════════════════════════════════════════════════════════════════════════════
