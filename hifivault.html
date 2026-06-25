@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>HifiVault — Steganography Tool</title>
+<title>HifiVault</title>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :root{
@@ -215,12 +215,12 @@ footer a{color:var(--accent);text-decoration:none}
     <div class="logo-mark">
       <svg viewBox="0 0 24 24"><path d="M12 1L3 5V11C3 16.55 6.84 21.74 12 23C17.16 21.74 21 16.55 21 11V5L12 1Z"/></svg>
     </div>
-    HifiVault
+    Hifi-Vault
   </a>
   <div class="nav-right">
     <div class="nav-status">
       <div class="pulse-dot"></div>
-      AES-256 encrypted
+      
     </div>
     <span class="nav-pill">Steganography</span>
   </div>
@@ -407,11 +407,32 @@ footer a{color:var(--accent);text-decoration:none}
     </div>
 
     <div class="status" id="hide-status">
+      <div id="result-card" class="card" style="display:none;margin-top:16px;">
+  <div class="card-title" style="margin-bottom:12px;">
+    Generated Stego Image
+  </div>
+
+  <div class="img-preview-wrap" style="display:block;">
+    <img id="result-preview" src="">
+  </div>
+
+  <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:15px;">
+
+    <button id="download-btn" class="btn-dl">
+      Download
+    </button>
+
+    <button id="share-btn" class="btn-dl">
+      Share
+    </button>
+
+  </div>
+</div>
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"></svg>
       <div class="status-body">
         <div class="status-title" id="hide-st"></div>
         <div class="status-msg" id="hide-sm"></div>
-        <a id="hide-dl" href="#" class="btn-dl" download="hidden_file.png" style="display:none">
+        <a id="hide-dl" href="#" class="btn-dl" download="hidden_file.png" style="display:none" onclick="return false;">
           <svg viewBox="0 0 24 24" fill="none" stroke-width="2.5"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" stroke="currentColor"/><polyline points="7 10 12 15 17 10" stroke="currentColor"/><line x1="12" y1="15" x2="12" y2="3" stroke="currentColor"/></svg>
           Download stego image
         </a>
@@ -505,420 +526,327 @@ footer a{color:var(--accent);text-decoration:none}
 </footer>
 </div>
 
+
+
 <script>
-/* ---- CONFIG ---- */
-const API = 'http://127.0.0.1:8000';
 
-/* ---- CANVAS PARTICLES ---- */
-(function(){
-  const c=document.getElementById('bg-canvas');
-  const ctx=c.getContext('2d');
-  let W,H,pts=[];
-  function resize(){W=c.width=window.innerWidth;H=c.height=window.innerHeight;pts=[];for(let i=0;i<55;i++)pts.push({x:Math.random()*W,y:Math.random()*H,vx:(Math.random()-0.5)*0.25,vy:(Math.random()-0.5)*0.25,r:Math.random()*1.5+0.5})}
-  window.addEventListener('resize',resize);resize();
-  function draw(){
-    ctx.clearRect(0,0,W,H);
-    for(let i=0;i<pts.length;i++){
-      const p=pts[i];
-      p.x+=p.vx;p.y+=p.vy;
-      if(p.x<0||p.x>W)p.vx*=-1;
-      if(p.y<0||p.y>H)p.vy*=-1;
-      ctx.beginPath();ctx.arc(p.x,p.y,p.r,0,Math.PI*2);
-      ctx.fillStyle='rgba(124,111,255,0.55)';ctx.fill();
-      for(let j=i+1;j<pts.length;j++){
-        const q=pts[j];
-        const d=Math.hypot(p.x-q.x,p.y-q.y);
-        if(d<130){
-          ctx.beginPath();ctx.moveTo(p.x,p.y);ctx.lineTo(q.x,q.y);
-          ctx.strokeStyle=`rgba(124,111,255,${0.08*(1-d/130)})`;
-          ctx.lineWidth=0.6;ctx.stroke()
-        }
-      }
-    }
-    requestAnimationFrame(draw)
+let encryptedBlob = null;
+let encryptedURL = null;
+const API = 'https://hifivault-backend.onrender.com';
+
+/* ---------------- UI HELPERS ---------------- */
+function setBtn(id, loading, def) {
+  const btn = document.getElementById(id);
+  btn.disabled = loading;
+  btn.innerHTML = loading
+    ? `<div class="spinner"></div> Processing…`
+    : def;
+}
+
+function fmtSize(bytes){
+  if(bytes < 1024) return bytes + ' B';
+  if(bytes < 1048576) return (bytes/1024).toFixed(1) + ' KB';
+  return (bytes/1048576).toFixed(1) + ' MB';
+}
+
+function showStatus(id, type, title, msg){
+  const box = document.getElementById(id);
+  box.className = `status show ${type}`;
+  box.querySelector('.status-title').textContent = title;
+  box.querySelector('.status-msg').textContent = msg;
+
+  const icon = box.querySelector('svg');
+  if(type === 'ok'){
+    icon.innerHTML = `<polyline points="20 6 9 17 4 12"/>`;
+  } else if(type === 'err'){
+    icon.innerHTML = `<circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/>`;
+  } else {
+    icon.innerHTML = `<path d="M10 2L2 20h20L10 2z"/>`;
   }
-  draw();
-})();
-
-/* ---- TAB SWITCH ---- */
-function switchTab(t){
-  document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'));
-  document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
-  document.querySelector(`[data-tab="${t}"]`).classList.add('active');
-  document.getElementById('panel-'+t).classList.add('active');
 }
 
-/* ---- PAYLOAD TOGGLE ---- */
-let payloadMode='file';
-function setPayload(m){
-  payloadMode=m;
-  document.getElementById('pt-file').classList.toggle('active',m==='file');
-  document.getElementById('pt-msg').classList.toggle('active',m==='msg');
-  document.getElementById('ps-file').classList.toggle('active',m==='file');
-  document.getElementById('ps-msg').classList.toggle('active',m==='msg');
-}
-
-/* ---- DRAG AND DROP ---- */
-function dzOver(e,id){e.preventDefault();document.getElementById(id).classList.add('over')}
-function dzOut(id){document.getElementById(id).classList.remove('over')}
+/* ---------------- DRAG HELPERS ---------------- */
+function dzOver(e,id){ e.preventDefault(); document.getElementById(id).classList.add('over'); }
+function dzOut(id){ document.getElementById(id).classList.remove('over'); }
 function dzDrop(e,id,inputId,cb){
-  e.preventDefault();dzOut(id);
-  const dt=e.dataTransfer;
-  if(dt.files.length){
-    const input=document.getElementById(inputId);
-    try{const transfer=new DataTransfer();transfer.items.add(dt.files[0]);input.files=transfer.files;}catch(err){console.warn(err)}
+  e.preventDefault();
+  dzOut(id);
+  const input = document.getElementById(inputId);
+  if(e.dataTransfer.files.length){
+    input.files = e.dataTransfer.files;
     cb();
   }
 }
 
-/* ---- COVER IMAGE ---- */
+/* ---------------- COVER PREVIEW ---------------- */
 function coverChosen(){
-  const f=document.getElementById('cover-file').files[0];
-  if(!f)return;
-  const url=URL.createObjectURL(f);
-  document.getElementById('cover-preview-img').src=url;
-  document.getElementById('cover-preview-name').textContent=f.name;
-  document.getElementById('cover-preview-size').textContent=fmtSize(f.size);
-  document.getElementById('cover-preview-wrap').style.display='block';
-  document.getElementById('dz-cover').style.display='none';
+  const f = document.getElementById('cover-file').files[0];
+  if(!f) return;
+
+  const url = URL.createObjectURL(f);
+  document.getElementById('cover-preview-img').src = url;
+  document.getElementById('cover-preview-name').textContent = f.name;
+  document.getElementById('cover-preview-size').textContent = fmtSize(f.size);
+
+  document.getElementById('cover-preview-wrap').style.display = 'block';
+  document.getElementById('dz-cover').style.display = 'none';
 }
+
 function resetCover(){
-  document.getElementById('cover-file').value='';
-  document.getElementById('cover-preview-wrap').style.display='none';
-  document.getElementById('dz-cover').style.display='block';
+  document.getElementById('cover-file').value = '';
+  document.getElementById('cover-preview-wrap').style.display = 'none';
+  document.getElementById('dz-cover').style.display = 'block';
 }
 
-/* ---- SECRET FILE ---- */
+/* ---------------- SECRET FILE ---------------- */
 function secretChosen(){
-  const f=document.getElementById('secret-file').files[0];
-  if(!f)return;
-  document.getElementById('secret-name').textContent=f.name;
-  document.getElementById('secret-size').textContent=fmtSize(f.size);
-  document.getElementById('secret-chip').style.display='flex';
+  const f = document.getElementById('secret-file').files[0];
+  if(!f) return;
+
+  document.getElementById('secret-name').textContent = f.name;
+  document.getElementById('secret-size').textContent = fmtSize(f.size);
+  document.getElementById('secret-chip').style.display = 'flex';
 }
 
-/* ---- STEGO IMAGE ---- */
+/* ---------------- STEGO PREVIEW ---------------- */
 function stegoChosen(){
-  const f=document.getElementById('stego-file').files[0];
-  if(!f)return;
-  const url=URL.createObjectURL(f);
-  document.getElementById('stego-preview-img').src=url;
-  document.getElementById('stego-preview-name').textContent=f.name;
-  document.getElementById('stego-preview-size').textContent=fmtSize(f.size);
-  document.getElementById('stego-preview-wrap').style.display='block';
-  document.getElementById('dz-stego').style.display='none';
+  const f = document.getElementById('stego-file').files[0];
+  if(!f) return;
+
+  const url = URL.createObjectURL(f);
+  document.getElementById('stego-preview-img').src = url;
+  document.getElementById('stego-preview-name').textContent = f.name;
+  document.getElementById('stego-preview-size').textContent = fmtSize(f.size);
+
+  document.getElementById('stego-preview-wrap').style.display = 'block';
+  document.getElementById('dz-stego').style.display = 'none';
 }
+
 function resetStego(){
-  document.getElementById('stego-file').value='';
-  document.getElementById('stego-preview-wrap').style.display='none';
-  document.getElementById('dz-stego').style.display='block';
+  document.getElementById('stego-file').value = '';
+  document.getElementById('stego-preview-wrap').style.display = 'none';
+  document.getElementById('dz-stego').style.display = 'block';
 }
 
-/* ---- MSG COUNTER ---- */
-function msgInput(){
-  const val=document.getElementById('secret-msg').value.length;
-  const el=document.getElementById('msg-count');
-  el.textContent=val+' / 2000';
-  el.className='char-count'+(val>1800?' warn':'')+(val>=2000?' over':'');
+/* ---------------- SHARE + DOWNLOAD BUTTON ---------------- */
+async function downloadBlob(blob, filename) {
+
+  const url = URL.createObjectURL(blob);
+
+  const a = document.createElement('a');
+
+  a.href = url;
+  a.download = filename;
+
+  document.body.appendChild(a);
+
+  a.click();
+
+  a.remove();
+
+  URL.revokeObjectURL(url);
 }
 
-/* ---- PASSWORD STRENGTH ---- */
-function pwStrength(){
-  const pw=document.getElementById('hide-pw').value;
-  const fill=document.getElementById('strength-fill');
-  const label=document.getElementById('strength-label');
-  if(!pw){fill.style.width='0%';fill.style.background='';label.textContent='Enter a password';return}
-  let score=0;
-  if(pw.length>=8)score++;if(pw.length>=12)score++;
-  if(/[A-Z]/.test(pw))score++;if(/[0-9]/.test(pw))score++;if(/[^A-Za-z0-9]/.test(pw))score++;
-  const levels=[
-    {w:'20%',bg:'#f06060',t:'Very weak'},
-    {w:'40%',bg:'#f59e0b',t:'Weak'},
-    {w:'60%',bg:'#eab308',t:'Fair'},
-    {w:'80%',bg:'#84cc16',t:'Strong'},
-    {w:'100%',bg:'#20dfa8',t:'Very strong'}
-  ];
-  const l=levels[Math.min(score,4)];
-  fill.style.width=l.w;fill.style.background=l.bg;label.textContent=l.t;
-  label.style.color=l.bg;
-}
 
-/* ---- PASSWORD MATCH ---- */
-function checkMatch(){
-  const pw=document.getElementById('hide-pw').value;
-  const pw2=document.getElementById('hide-pw2').value;
-  const el=document.getElementById('pw-match');
-  if(!pw2){el.className='pw-match';return}
-  if(pw===pw2){
-    el.className='pw-match ok';
-    el.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="12" height="12"><polyline points="20 6 9 17 4 12"/></svg> Passwords match';
-  }else{
-    el.className='pw-match bad';
-    el.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="12" height="12"><line x1="18" y1="6" x2="6" y2="18" stroke="currentColor"/><line x1="6" y1="6" x2="18" y2="18" stroke="currentColor"/></svg> Passwords do not match';
-  }
-}
+async function shareBlob(blob, filename) {
 
-/* ---- TOGGLE PW VISIBILITY ---- */
-function togglePw(id,btn){
-  const inp=document.getElementById(id);
-  inp.type=inp.type==='password'?'text':'password';
-  const svgs=btn.querySelectorAll('svg');
-  if(inp.type==='text'){
-    svgs[0].innerHTML='<path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19m-6.72-1.07a3 3 0 11-4.24-4.24" stroke="currentColor"/><line x1="1" y1="1" x2="23" y2="23" stroke="currentColor"/>';
-  }else{
-    svgs[0].innerHTML='<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" stroke="currentColor"/><circle cx="12" cy="12" r="3" stroke="currentColor"/>';
-  }
-}
-
-/* ---- PROGRESS SIMULATION ---- */
-function animateProgress(fillId, labelId, steps, cb){
-  let i=0;
-  const fill=document.getElementById(fillId);
-  const label=document.getElementById(labelId);
-  function next(){
-    if(i>=steps.length){cb();return}
-    fill.style.width=steps[i].pct+'%';
-    label.textContent=steps[i].msg;
-    i++;
-    setTimeout(next, steps[i-1].delay||600);
-  }
-  next();
-}
-
-/* ---- STATUS ---- */
-function showStatus(boxId, type, title, msg){
-  const box=document.getElementById(boxId);
-  box.className='status show '+type;
-  const icon=box.querySelector('svg');
-  if(type==='ok'){
-    icon.innerHTML='<polyline points="20 6 9 17 4 12" stroke="currentColor"/>';
-  }else if(type==='err'){
-    icon.innerHTML='<circle cx="12" cy="12" r="10" stroke="currentColor"/><line x1="12" y1="8" x2="12" y2="12" stroke="currentColor"/><line x1="12" y1="16" x2="12.01" y2="16" stroke="currentColor"/>';
-  }else{
-    icon.innerHTML='<path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" stroke="currentColor"/><line x1="12" y1="9" x2="12" y2="13" stroke="currentColor"/><line x1="12" y1="17" x2="12.01" y2="17" stroke="currentColor"/>';
-  }
-  document.getElementById(boxId.replace('status','st')).textContent=title;
-  document.getElementById(boxId.replace('status','sm')).textContent=msg;
-}
-
-/* ---- LOADING ---- */
-const HIDE_DEFAULT=`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="15" height="15"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>Encrypt &amp; hide`;
-const EXT_DEFAULT=`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="15" height="15"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>Decrypt &amp; reveal`;
-
-function setBtn(id,loading,def){
-  const btn=document.getElementById(id);
-  btn.disabled=loading;
-  btn.innerHTML=loading?'<div class="spinner"></div> Processing…':def;
-}
-
-/* ---- COPY MSG ---- */
-function copyMsg(){
-  const txt=document.getElementById('extracted-msg').textContent;
-  navigator.clipboard.writeText(txt).then(()=>{
-    const btn=document.getElementById('copy-msg-btn');
-    const orig=btn.innerHTML;
-    btn.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke-width="2.5" width="13" height="13"><polyline points="20 6 9 17 4 12" stroke="currentColor"/></svg>Copied!';
-    setTimeout(()=>btn.innerHTML=orig,1800);
-  });
-}
-
-/* ---- FORMAT ---- */
-function fmtSize(bytes){
-  if(bytes<1024)return bytes+' B';
-  if(bytes<1048576)return (bytes/1024).toFixed(1)+' KB';
-  return (bytes/1048576).toFixed(1)+' MB';
-}
-
-/* ---- SUBMIT HIDE ---- */
-async function submitHide(){
-  const image=document.getElementById('cover-file').files[0];
-  const pw=document.getElementById('hide-pw').value;
-  const pw2=document.getElementById('hide-pw2').value;
-
-  if(!image)return showStatus('hide-status','err','No cover image','Select a cover image first.');
-  if(!pw)return showStatus('hide-status','err','No password','Enter a password to encrypt your payload.');
-  if(pw!==pw2)return showStatus('hide-status','err','Passwords do not match','Both password fields must match exactly.');
-
-  let file, filename, filetype;
-  if(payloadMode==='file'){
-    file=document.getElementById('secret-file').files[0];
-    if(!file)return showStatus('hide-status','err','No file selected','Select a file to hide, or switch to Message mode.');
-    filename=file.name; filetype=file.type;
-  }else{
-    const msg=document.getElementById('secret-msg').value.trim();
-    if(!msg)return showStatus('hide-status','err','Empty message','Type a message before encoding.');
-    const blob=new Blob([msg],{type:'text/plain'});
-    file=new File([blob],'secret_message.txt',{type:'text/plain'});
-    filename='secret_message.txt'; filetype='text/plain';
-  }
-
-  setBtn('hide-btn',true,HIDE_DEFAULT);
-  document.getElementById('hide-status').className='status';
-  document.getElementById('hide-dl').style.display='none';
-  document.getElementById('hide-progress').style.display='block';
-
-  animateProgress('hide-pf','hide-pl',[
-    {pct:15,msg:'Converting image to PNG…',delay:500},
-    {pct:40,msg:'Encrypting payload…',delay:700},
-    {pct:65,msg:'Embedding into image…',delay:800},
-    {pct:85,msg:'Finalizing…',delay:500},
-  ],async()=>{
-    const fd=new FormData();
-    fd.append('image',image);
-    fd.append('file',file);
-    fd.append('password',pw);
-    try{
-      const res=await fetch(`${API}/api/hide/`,{method:'POST',body:fd});
-      const data=await res.json();
-      document.getElementById('hide-pf').style.width='100%';
-      document.getElementById('hide-pl').textContent='Done!';
-      setTimeout(()=>{
-        document.getElementById('hide-progress').style.display='none';
-        if(!res.ok){
-          showStatus('hide-status','err','Failed',data.error||'Something went wrong.');
-        }else{
-  showStatus('hide-status','ok','Payload hidden!',
-    payloadMode==='msg'
-      ? 'Your message was encrypted and embedded into the image.'
-      : `"${filename}" was encrypted and embedded into the image.`
+  const file = new File(
+    [blob],
+    filename,
+    { type: 'image/png' }
   );
 
-  const dl=document.getElementById('hide-dl');
-  dl.href = data.download;   // backend correct field
-  dl.style.display = 'inline-flex';
+  if (
+    navigator.share &&
+    navigator.canShare &&
+    navigator.canShare({ files:[file] })
+  ) {
 
-  // RESET UI AFTER SUCCESS
-  setTimeout(() => {
-    resetHideUI();
-  }, 2000);
+    await navigator.share({
+      title:'HifiVault',
+      text:'Encrypted steganography image',
+      files:[file]
+    });
+
+  } else {
+
+    await downloadBlob(blob, filename);
+  }
 }
-        setBtn('hide-btn',false,HIDE_DEFAULT);
-      },400);
-    }catch(e){
-      document.getElementById('hide-progress').style.display='none';
-      showStatus('hide-status','err','Network error','Could not reach the server. Is the backend running?');
-      setBtn('hide-btn',false,HIDE_DEFAULT);
+let lastStegoBlobUrl = null;
+
+async function handleStegoAction(url, filename = "stego.png") {
+  try {
+    const res = await fetch(url);
+    const blob = await res.blob();
+
+    const file = new File([blob], filename, { type: blob.type });
+
+    // iOS / Android share sheet
+    if (navigator.share) {
+      await navigator.share({
+        title: "HifiVault Stego Image",
+        text: "Encrypted image from HifiVault",
+        files: [file]
+      });
+      return;
     }
-  });
+
+    // fallback download
+    const blobUrl = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = blobUrl;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+
+    URL.revokeObjectURL(blobUrl);
+  } catch (err) {
+    console.error(err);
+    alert("Could not share/download file.");
+  }
 }
 
+/* ---------------- HIDE (ENCODE) ---------------- */
+async function submitHide(){
+  const image = document.getElementById('cover-file').files[0];
+  const pw = document.getElementById('hide-pw').value;
+  const pw2 = document.getElementById('hide-pw2').value;
 
-function resetHideUI(){
-  document.getElementById('cover-file').value = '';
-  document.getElementById('secret-file').value = '';
-  resetCover();
-  document.getElementById('secret-chip').style.display = 'none';
+  if(!image) return showStatus('hide-status','err','No image','Select a cover image.');
+  if(!pw) return showStatus('hide-status','err','No password','Enter password.');
+  if(pw !== pw2) return showStatus('hide-status','err','Mismatch','Passwords do not match.');
 
-  document.getElementById('secret-msg').value = '';
-  msgInput();
+  let file;
+  const mode = payloadMode;
 
-  document.getElementById('hide-pw').value = '';
-  document.getElementById('hide-pw2').value = '';
-  document.getElementById('pw-match').className = 'pw-match';
+  if(mode === 'file'){
+    file = document.getElementById('secret-file').files[0];
+    if(!file) return showStatus('hide-status','err','No file','Select file.');
+  } else {
+    const msg = document.getElementById('secret-msg').value.trim();
+    if(!msg) return showStatus('hide-status','err','Empty','Type message.');
+    file = new File([msg], "secret.txt", {type:"text/plain"});
+  }
 
-  document.getElementById('hide-status').className = 'status';
-  document.getElementById('hide-dl').style.display = 'none';
-  document.getElementById('hide-progress').style.display = 'none';
+  setBtn('hide-btn', true, HIDE_DEFAULT);
+  document.getElementById('hide-progress').style.display = 'block';
 
-  setBtn('hide-btn', false, HIDE_DEFAULT);
+  const fd = new FormData();
+  fd.append('image', image);
+  fd.append('file', file);
+  fd.append('password', pw);
+
+  try {
+    const res = await fetch(`${API}/api/hide/`, { method:'POST', body: fd });
+    const data = await res.json();
+
+    document.getElementById('hide-progress').style.display = 'none';
+
+    if(!res.ok){
+      showStatus('hide-status','err','Failed',data.error || 'Error');
+      setBtn('hide-btn', false, HIDE_DEFAULT);
+      return;
+    }
+
+    showStatus('hide-status','ok','Done','Image encrypted successfully.');
+
+    // 🔥 SAVE LAST RESULT URL
+    const stegoUrl = data.download;
+
+    const actionBtn = document.getElementById('hide-dl');
+    actionBtn.style.display = 'inline-flex';
+
+    actionBtn.onclick = (e) => {
+      e.preventDefault();
+      handleStegoAction(stegoUrl, "hifivault-stego.png");
+    };
+
+    setBtn('hide-btn', false, HIDE_DEFAULT);
+
+  } catch(err){
+    document.getElementById('hide-progress').style.display = 'none';
+    showStatus('hide-status','err','Network error','Server unreachable');
+    setBtn('hide-btn', false, HIDE_DEFAULT);
+  }
 }
 
-/* ---- SUBMIT EXTRACT ---- */
+/* ---------------- EXTRACT (DECODE) ---------------- */
 async function submitExtract(){
-  const image=document.getElementById('stego-file').files[0];
-  const pw=document.getElementById('extract-pw').value;
+  const image = document.getElementById('stego-file').files[0];
+  const pw = document.getElementById('extract-pw').value;
 
-  if(!image)return showStatus('extract-status','err','No image','Upload the stego image first.');
-  if(!pw)return showStatus('extract-status','err','No password','Enter the decryption password.');
+  if(!image) return showStatus('extract-status','err','No image','Upload stego image.');
+  if(!pw) return showStatus('extract-status','err','No password','Enter password.');
 
-  setBtn('extract-btn',true,EXT_DEFAULT);
-  document.getElementById('extract-status').className='status';
-  document.getElementById('extracted-msg').className='msg-reveal';
-  document.getElementById('copy-msg-btn').style.display='none';
-  document.getElementById('extract-dl').style.display='none';
-  document.getElementById('extract-progress').style.display='block';
+  setBtn('extract-btn', true, EXT_DEFAULT);
+  document.getElementById('extract-progress').style.display = 'block';
 
-  animateProgress('extract-pf','extract-pl',[
-    {pct:20,msg:'Reading image pixels…',delay:500},
-    {pct:50,msg:'Extracting hidden bits…',delay:700},
-    {pct:75,msg:'Decrypting payload…',delay:700},
-    {pct:90,msg:'Almost done…',delay:400},
-  ],async()=>{
-    const fd=new FormData();
-    fd.append('image',image);
-    fd.append('password',pw);
-    try{
-      const res=await fetch(`${API}/api/extract/`,{method:'POST',body:fd});
-      const data=await res.json();
-      document.getElementById('extract-pf').style.width='100%';
-      document.getElementById('extract-pl').textContent='Done!';
-      setTimeout(()=>{
-        document.getElementById('extract-progress').style.display='none';
-        if(!res.ok){
-          showStatus('extract-status','err',
-            data.error==='Wrong password'?'Wrong password':'Extraction failed',
-            data.error||'Something went wrong.');
-        }else{
-          const isMsg=data.filename==='secret_message.txt'||data.filetype==='text/plain';
-          showStatus('extract-status','ok','Payload revealed!',
-            isMsg?'A hidden message was found inside the image:':
-            `Recovered: ${data.filename} (${data.filetype})`);
-          if(isMsg){
-            // fetch the actual text content
-            fetch(data.saved_to).then(r=>r.text()).then(txt=>{
-              const box=document.getElementById('extracted-msg');
-              box.textContent=txt;
-              box.className='msg-reveal show';
-              document.getElementById('copy-msg-btn').style.display='inline-flex';
-            }).catch(()=>{
-              document.getElementById('extract-sm').textContent='Message extracted. Download to read it.';
-              const dl=document.getElementById('extract-dl');
-              dl.href=data.saved_to; dl.download=data.filename; dl.style.display='inline-flex';
-            });
-          }else{
-            const dl=document.getElementById('extract-dl');
-            dl.href=data.saved_to; dl.download=data.filename; dl.style.display='inline-flex';
-          }
-        }
-        setBtn('extract-btn',false,EXT_DEFAULT);
-      },400);
-    }catch(e){
-      document.getElementById('extract-progress').style.display='none';
-      showStatus('extract-status','err','Network error','Could not reach the server. Is the backend running?');
-      setBtn('extract-btn',false,EXT_DEFAULT);
+  const fd = new FormData();
+  fd.append('image', image);
+  fd.append('password', pw);
+
+  try {
+    const res = await fetch(`${API}/api/extract/`, { method:'POST', body: fd });
+    const data = await res.json();
+
+    document.getElementById('extract-progress').style.display = 'none';
+
+    if(!res.ok){
+      showStatus('extract-status','err','Failed',data.error || 'Error');
+      setBtn('extract-btn', false, EXT_DEFAULT);
+      return;
     }
-  });
+
+    const isText = data.filetype === 'text/plain';
+
+    showStatus('extract-status','ok','Success','Payload recovered.');
+
+    const dl = document.getElementById('extract-dl');
+    dl.style.display = 'inline-flex';
+
+    dl.onclick = (e) => {
+      e.preventDefault();
+      handleStegoAction(data.saved_to, data.filename);
+    };
+
+    if(isText){
+      const txt = await (await fetch(data.saved_to)).text();
+      const box = document.getElementById('extracted-msg');
+      box.textContent = txt;
+      box.className = 'msg-reveal show';
+      document.getElementById('copy-msg-btn').style.display = 'inline-flex';
+    }
+
+    setBtn('extract-btn', false, EXT_DEFAULT);
+
+  } catch(err){
+    document.getElementById('extract-progress').style.display = 'none';
+    showStatus('extract-status','err','Network error','Server unreachable');
+    setBtn('extract-btn', false, EXT_DEFAULT);
+  }
 }
 
-function resetHideUI(){
-  // files
-  document.getElementById('cover-file').value = '';
-  document.getElementById('secret-file').value = '';
-
-  // previews
-  resetCover();
-  document.getElementById('secret-chip').style.display = 'none';
-
-  // message
-  document.getElementById('secret-msg').value = '';
-  msgInput();
-
-  // passwords
-  document.getElementById('hide-pw').value = '';
-  document.getElementById('hide-pw2').value = '';
-  pwStrength();
-  document.getElementById('pw-match').className = 'pw-match';
-
-  // status
-  document.getElementById('hide-status').className = 'status';
-  document.getElementById('hide-dl').style.display = 'none';
-
-  // progress
-  document.getElementById('hide-progress').style.display = 'none';
-
-  // reset button state (optional safety)
-  setBtn('hide-btn', false, HIDE_DEFAULT);
+/* ---------------- COPY ---------------- */
+function copyMsg(){
+  const txt = document.getElementById('extracted-msg').textContent;
+  navigator.clipboard.writeText(txt);
 }
+
+/* ---------------- TOGGLE ---------------- */
+let payloadMode = 'file';
+function setPayload(m){
+  payloadMode = m;
+  document.getElementById('pt-file').classList.toggle('active', m==='file');
+  document.getElementById('pt-msg').classList.toggle('active', m==='msg');
+  document.getElementById('ps-file').classList.toggle('active', m==='file');
+  document.getElementById('ps-msg').classList.toggle('active', m==='msg');
+}
+
+/* ---------------- DEFAULT BUTTONS ---------------- */
+const HIDE_DEFAULT = `Encrypt & hide`;
+const EXT_DEFAULT = `Decrypt & reveal`;
 </script>
 </body>
 </html>
